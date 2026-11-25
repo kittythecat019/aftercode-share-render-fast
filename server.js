@@ -14,7 +14,7 @@ const SOURCES = {
   projects:
     "https://epeqemysiivpzhpcervt.supabase.co/functions/v1/api/projects",
   activity:
-    "https://epeqemysiivpzhpcervt.supabase.co/functions/v1/api/activity"
+  "https://epeqemysiivpzhpcervt.supabase.co/functions/v1/api/public-activity"
 };
 
 const DATASETS = {
