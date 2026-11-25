@@ -3,8 +3,8 @@ const http = require("node:http");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 
-const PORT = 3100;
-const HOST = "127.0.0.1";
+const PORT = process.env.PORT || 3100;
+const HOST = "0.0.0.0";
 
 const DATA_DIR = path.join(__dirname, "data");
 
