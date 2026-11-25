@@ -5,13 +5,10 @@ const path = require("node:path");
 
 const PORT = process.env.PORT || 3100;
 const HOST = "0.0.0.0";
-
 const DATA_DIR = path.join(__dirname, "data");
 
 const ALLOWED_ORIGINS = new Set([
-  "https://aftercode-official.github.io",
-  "http://localhost:5173",
-  "http://127.0.0.1:5173"
+  "https://aftercode-official.github.io"
 ]);
 
 function sendJson(res, status, data) {
@@ -27,9 +24,8 @@ function setCors(req, res) {
   if (origin && ALLOWED_ORIGINS.has(origin)) {
     res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Vary", "Origin");
-    res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-    res.setHeader("Access-Control-Allow-Private-Network", "true");
   }
 
   return !origin || ALLOWED_ORIGINS.has(origin);
@@ -68,6 +64,30 @@ async function saveJson(filePath, data) {
   await fs.rename(temporaryPath, filePath);
 }
 
+async function loadJson(filePath) {
+  const content = await fs.readFile(filePath, "utf8");
+  return JSON.parse(content);
+}
+
+const DATASETS = {
+  whatsHappening: {
+    file: "whats-happening.json",
+    limit: 5
+  },
+  featuredProjects: {
+    file: "featured-projects.json",
+    limit: 6
+  },
+  recentProjects: {
+    file: "recent-projects.json",
+    limit: 6
+  },
+  exploreProjects: {
+    file: "explore-projects.json",
+    limit: 8
+  }
+};
+
 const server = http.createServer(async (req, res) => {
   if (!setCors(req, res)) {
     return sendJson(res, 403, {
@@ -89,86 +109,112 @@ const server = http.createServer(async (req, res) => {
     });
   }
 
-  if (req.method !== "POST" || req.url !== "/api/sync") {
-    return sendJson(res, 404, {
-      success: false,
-      error: "Endpoint không tồn tại."
-    });
+  // Kiểm tra trạng thái dữ liệu
+  if (req.method === "GET" && req.url === "/api/status") {
+    try {
+      const info = await loadJson(
+        path.join(DATA_DIR, "sync-info.json")
+      );
+
+      return sendJson(res, 200, {
+        success: true,
+        hasData: true,
+        ...info
+      });
+    } catch {
+      return sendJson(res, 200, {
+        success: true,
+        hasData: false,
+        needsSync: true
+      });
+    }
   }
 
-  try {
-    const payload = await readBody(req);
+  // Render lấy toàn bộ dữ liệu
+  if (req.method === "GET" && req.url === "/api/data") {
+    try {
+      const sharedDir = path.join(DATA_DIR, "shared");
 
-    const requiredArrays = [
-      "whatsHappening",
-      "featuredProjects",
-      "recentProjects",
-      "exploreProjects"
-    ];
+      const data = {};
 
-    for (const key of requiredArrays) {
-      if (!Array.isArray(payload[key])) {
-        throw new Error(`Thiếu dữ liệu hợp lệ: ${key}`);
+      for (const [key, config] of Object.entries(DATASETS)) {
+        data[key] = await loadJson(
+          path.join(sharedDir, config.file)
+        );
       }
+
+      const syncInfo = await loadJson(
+        path.join(DATA_DIR, "sync-info.json")
+      );
+
+      return sendJson(res, 200, {
+        success: true,
+        updatedAt: syncInfo.updatedAt,
+        data
+      });
+    } catch {
+      return sendJson(res, 404, {
+        success: false,
+        hasData: false,
+        needsSync: true,
+        error: "Chưa có dữ liệu. Cần đồng bộ lại."
+      });
     }
+  }
 
-    const sharedDir = path.join(DATA_DIR, "shared");
+  // Aftercode gửi dữ liệu lên Render
+  if (req.method === "POST" && req.url === "/api/sync") {
+    try {
+      const payload = await readBody(req);
+      const sharedDir = path.join(DATA_DIR, "shared");
 
-    await Promise.all([
-      saveJson(
-        path.join(sharedDir, "whats-happening.json"),
-        payload.whatsHappening.slice(0, 5)
-      ),
+      for (const [key, config] of Object.entries(DATASETS)) {
+        if (!Array.isArray(payload[key])) {
+          throw new Error(`Thiếu dữ liệu hợp lệ: ${key}`);
+        }
 
-      saveJson(
-        path.join(sharedDir, "featured-projects.json"),
-        payload.featuredProjects.slice(0, 6)
-      ),
+        await saveJson(
+          path.join(sharedDir, config.file),
+          payload[key].slice(0, config.limit)
+        );
+      }
 
-      saveJson(
-        path.join(sharedDir, "recent-projects.json"),
-        payload.recentProjects.slice(0, 6)
-      ),
-
-      saveJson(
-        path.join(sharedDir, "explore-projects.json"),
-        payload.exploreProjects.slice(0, 8)
-      )
-    ]);
-
-    await saveJson(
-      path.join(DATA_DIR, "sync-info.json"),
-      {
+      const syncInfo = {
         success: true,
         updatedAt: new Date().toISOString(),
-        counts: {
-          whatsHappening: Math.min(payload.whatsHappening.length, 5),
-          featuredProjects: Math.min(payload.featuredProjects.length, 6),
-          recentProjects: Math.min(payload.recentProjects.length, 6),
-          exploreProjects: Math.min(payload.exploreProjects.length, 8)
-        }
-      }
-    );
+        counts: Object.fromEntries(
+          Object.entries(DATASETS).map(([key, config]) => [
+            key,
+            Math.min(payload[key].length, config.limit)
+          ])
+        )
+      };
 
-    return sendJson(res, 200, {
-      success: true,
-      message: "Đã nhận và lưu dữ liệu Aftercode.",
-      counts: {
-        whatsHappening: Math.min(payload.whatsHappening.length, 5),
-        featuredProjects: Math.min(payload.featuredProjects.length, 6),
-        recentProjects: Math.min(payload.recentProjects.length, 6),
-        exploreProjects: Math.min(payload.exploreProjects.length, 8)
-      }
-    });
+      await saveJson(
+        path.join(DATA_DIR, "sync-info.json"),
+        syncInfo
+      );
 
-  } catch (error) {
-    console.error("Sync error:", error);
+      return sendJson(res, 200, {
+        success: true,
+        message: "Đồng bộ thành công.",
+        ...syncInfo
+      });
 
-    return sendJson(res, 400, {
-      success: false,
-      error: error.message
-    });
+    } catch (error) {
+      console.error("Sync error:", error);
+
+      return sendJson(res, 400, {
+        success: false,
+        error: error.message
+      });
+    }
   }
+
+  return sendJson(res, 404, {
+    success: false,
+    error: "Endpoint không tồn tại."
+  });
 });
 
 server.listen(PORT, HOST, () => {
