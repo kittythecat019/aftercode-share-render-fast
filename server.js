@@ -207,23 +207,29 @@ async function syncFromAftercode() {
   try {
     console.log("Đang lấy dữ liệu từ Aftercode...");
 
-    const [projectResponse, activityResponse] =
-      await Promise.all([
-        fetchAftercode(SOURCES.projects),
-        fetchAftercode(SOURCES.activity)
-      ]);
+    const projectResponse = await fetchAftercode(SOURCES.projects);
+
+let activityResponse = null;
+
+try {
+  activityResponse = await fetchAftercode(SOURCES.activity);
+} catch (error) {
+  console.warn("Không lấy được activity:", error.message);
+}
 
     const projects = findArray(
       projectResponse,
       ["projects", "data", "items", "results"]
     );
 
-    const activities = findArray(
+    const activities = activityResponse
+  ? findArray(
       activityResponse,
       ["activities", "activity", "data", "items", "results"]
-    );
+    ) || []
+  : [];
 
-    if (!projects || !activities) {
+    if (!projects) {
       throw new Error(
         "Không tìm thấy mảng projects hoặc activities trong API."
       );
